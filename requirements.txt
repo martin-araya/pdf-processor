@@ -1,0 +1,12 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+PyMuPDF==1.23.8  # Mantén para PDF
+deep-translator==1.11.4
+sqlalchemy[asyncio]==2.0.23  # Async support
+asyncpg==0.29.0  # Driver async para Postgres (reemplaza psycopg2 si async)
+python-dotenv==1.0.0
+pytest
+requests
+pydantic==2.5.0  # Para API models
+alembic==1.13.1  # Migrations (opcional, pero recomendado)
+urllib3==2.0.7  # Si needed para requests; ya en requests
