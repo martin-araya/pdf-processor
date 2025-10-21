@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16  # Postgres 16 oficial
+    container_name: auth_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_db      # Nombre de la DB
+      POSTGRES_USER: postgres   # Usuario default
+      POSTGRES_PASSWORD: postgres  # Password default (cambia!)
+    ports:
+      - "5433:5432"  # Expone puerto al host (localhost:5432)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Persistencia de data
+    networks:
+      - auth_network
+
+volumes:
+  postgres_data:  # Volume nombrado para backup/mount
+
+networks:
+  auth_network:  # Network interna (opcional, pero bueno para future services)
+    driver: bridge
