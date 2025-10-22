@@ -1,225 +1,141 @@
-import 'dart:io' show File, Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:http_parser/http_parser.dart';
-import '../models/document.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'api_base.dart';  // Utilidades y AuthException
 
-class ApiService {
-  static const String baseUrl = 'http://localhost:8000';
-  final Dio _dio = Dio();
-
-  ApiService() {
-    _dio.options.connectTimeout = const Duration(seconds: 30);
-    _dio.options.receiveTimeout = const Duration(seconds: 30);
-    _dio.options.sendTimeout = const Duration(minutes: 5);
-
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: false,
-      responseBody: true,
-      error: true,
-    ));
-  }
-
-  // uploadPDF sin cambios (ya funciona)
-  Future<Map<String, dynamic>> uploadPDF(PlatformFile platformFile) async {
+class AuthService {
+  // Login (retorna data para AuthProvider; no save aquí)
+  static Future<Map<String, dynamic>> login(String username, String password) async {
     try {
-      print('═══════════════════════════════════════');
-      print('🚀 UPLOAD PDF - VERSIÓN CORREGIDA (CROSS-PLATFORM)');
-      print('═══════════════════════════════════════');
-      print('📁 Archivo: ${platformFile.path ?? 'N/A (web)'}');
-      print('📄 Nombre: ${platformFile.name}');
-      print('🖥️ Plataforma: ${kIsWeb ? "Web" : Platform.operatingSystem}');
-
-      if (platformFile.bytes == null && (platformFile.path == null || platformFile.path!.isEmpty)) {
-        throw Exception('No se pudo leer el archivo');
-      }
-
-      final size = platformFile.size;
-      print('📊 Tamaño: $size bytes (${(size / 1024).toStringAsFixed(2)} KB)');
-
-      if (size == 0) {
-        throw Exception('El archivo está vacío');
-      }
-
-      MultipartFile multipartFile;
-      final fileName = platformFile.name;
-      final contentType = MediaType('application', 'pdf');
-
-      if (kIsWeb) {
-        // Web: siempre fromBytes (path no disponible)
-        if (platformFile.bytes == null) {
-          throw Exception('Bytes no disponibles en web');
-        }
-        print('🌐 Modo web: usando fromBytes');
-        multipartFile = MultipartFile.fromBytes(
-          platformFile.bytes!,
-          filename: fileName,
-          contentType: contentType,
-        );
-      } else if (platformFile.path != null) {
-        // Desktop/Mobile: prioriza fromFile (más eficiente, envía como stream)
-        print('💻 Modo desktop/mobile: usando fromFile (path: ${platformFile.path})');
-        final file = File(platformFile.path!);
-        if (!await file.exists()) {
-          throw Exception('El archivo no existe: ${platformFile.path}');
-        }
-        multipartFile = await MultipartFile.fromFile(
-          platformFile.path!,
-          filename: fileName,
-          contentType: contentType,
-        );
-      } else {
-        // Fallback: fromBytes si path no hay
-        if (platformFile.bytes == null) {
-          throw Exception('Ni path ni bytes disponibles');
-        }
-        print('🔄 Fallback: usando fromBytes');
-        multipartFile = MultipartFile.fromBytes(
-          platformFile.bytes!,
-          filename: fileName,
-          contentType: contentType,
-        );
-      }
-
-      final formData = FormData.fromMap({
-        'file': multipartFile,
-      });
-
-      print('📦 FormData creado correctamente (clave: file)');
-      print('🌐 Enviando a: $baseUrl/api/process');
-
-      final response = await _dio.post(
-        '$baseUrl/api/process',
-        data: formData,
-        options: Options(
-          followRedirects: true,
-          validateStatus: (status) => status != null && status < 500,
-          receiveTimeout: const Duration(minutes: 5),
-          // Opcional: Para progreso real en PDFUploader
-          // onSendProgress: (sent, total) => print('Progress: ${(sent / total * 100).toStringAsFixed(0)}%'),
-        ),
-      );
-
-      print('═══════════════════════════════════════');
-      print('✅ RESPUESTA DEL SERVIDOR');
-      print('═══════════════════════════════════════');
-      print('Status: ${response.statusCode}');
-      print('Data: ${response.data}');
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        return response.data;
-      } else {
-        throw Exception('Error ${response.statusCode}: ${response.data}');
-      }
-
-    } on DioException catch (e) {
-      print('═══════════════════════════════════════');
-      print('❌ ERROR DIO');
-      print('═══════════════════════════════════════');
-      print('Status: ${e.response?.statusCode}');
-      print('Data: ${e.response?.data}');
-      print('Headers: ${e.response?.headers}');
-      throw Exception('Error ${e.response?.statusCode ?? 0}: ${e.response?.data ?? e.message}');
-    } catch (e) {
-      print('❌ Error general: $e');
-      rethrow;
-    }
-  }
-
-  // getDocument corregido (incluye images por default)
-  Future<Document> getDocument(String id, {bool includeImages = true}) async {
-    try {
-      final response = await _dio.get(
-        '$baseUrl/api/process/$id',
-        queryParameters: {'include_images': includeImages.toString()},
+      final dio = ApiBase.getAuthDio();
+      final response = await dio.post(
+        '/api/auth/login',  // Ajusta si tu Go usa /auth/login sin /api
+        data: {'username': username, 'password': password},
+        options: Options(contentType: 'application/json'),
       );
       if (response.statusCode == 200) {
-        return Document.fromJson(response.data);
+        debugPrint('✅ Login HTTP: 200');
+        return response.data as Map<String, dynamic>;  // {'token': '...', 'user_id': 1}
       } else {
-        throw Exception('Error ${response.statusCode}: ${response.data}');
+        throw DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          message: 'Login falló: ${response.statusCode}',
+        );
       }
+    } on DioException catch (e) {
+      debugPrint('❌ Login Dio error: ${e.response?.data ?? e.message}');
+      String msg = e.message ?? 'Login error';
+      if (e.response?.data != null) {
+        final data = e.response!.data;
+        msg = data is Map ? (data['error'] ?? data['message'] ?? 'Invalid credentials') : data.toString();
+      }
+      throw AuthException(msg);
     } catch (e) {
-      print('Error fetching document: $e');
+      debugPrint('❌ Login general: $e');
       rethrow;
     }
   }
 
-  // translateDocument sin cambios
-  Future<Document> translateDocument(String id, String targetLang, {String sourceLang = 'auto'}) async {
+  // Register (similar, solo user_id)
+  static Future<Map<String, dynamic>> register(String username, String password) async {
     try {
-      final response = await _dio.post(
-        '$baseUrl/api/process/$id/translate',
-        data: {'target_lang': targetLang, 'source_lang': sourceLang},
+      final dio = ApiBase.getAuthDio();
+      final response = await dio.post(
+        '/api/auth/register',  // Ajusta path si needed
+        data: {'username': username, 'password': password},
+        options: Options(contentType: 'application/json'),
+      );
+      if (response.statusCode == 201) {
+        debugPrint('✅ Register HTTP: 201');
+        return response.data as Map<String, dynamic>;  // {'user_id': 1, 'message': '...'}
+      } else {
+        throw DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          message: 'Register falló: ${response.statusCode}',
+        );
+      }
+    } on DioException catch (e) {
+      debugPrint('❌ Register Dio error: ${e.response?.data ?? e.message}');
+      String msg = e.message ?? 'Register error';
+      if (e.response?.data != null) {
+        final data = e.response!.data;
+        msg = data is Map ? (data['error'] ?? 'User already exists') : data.toString();
+      }
+      throw AuthException(msg);
+    } catch (e) {
+      debugPrint('❌ Register general: $e');
+      rethrow;
+    }
+  }
+
+  // Validate Token (usa getToken de base)
+  static Future<Map<String, dynamic>> validateToken() async {
+    try {
+      final token = await ApiBase.getToken();
+      if (token == null || token.isEmpty) {
+        throw AuthException('No token available');
+      }
+
+      final dio = ApiBase.getAuthDio();
+      final response = await dio.get(
+        '/api/auth/validate',  // Agrega este endpoint en Go si no existe
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data as Map<String, dynamic>;
+        if (data['valid'] == true) {
+          debugPrint('🔑 Validate success');
+          return data;  // {'valid': true, 'user_id': 1, ...}
+        }
+      }
+      await ApiBase.clearAuth();
+      throw AuthException('Token inválido');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        await ApiBase.clearAuth();
+        throw AuthException('Token expirado o inválido');
+      } else if (e.response?.statusCode == 404) {
+        debugPrint('⚠️ 404 validate: Configura /api/auth/validate en Go.');
+        throw Exception('Validate endpoint no configurado');
+      }
+      String msg = e.message ?? 'Validation failed';
+      if (e.response?.data != null) {
+        final data = e.response!.data;
+        msg = data is Map ? (data['error'] ?? msg) : data.toString();
+      }
+      throw AuthException(msg);
+    } catch (e) {
+      debugPrint('❌ Validate general: $e');
+      rethrow;
+    }
+  }
+
+  // Opcional: Refresh (implementa en Go /api/auth/refresh)
+  static Future<Map<String, dynamic>> refreshToken(String oldToken) async {
+    try {
+      final dio = ApiBase.getAuthDio();
+      final response = await dio.post(
+        '/api/auth/refresh',
+        data: {'token': oldToken},
+        options: Options(contentType: 'application/json'),
       );
       if (response.statusCode == 200) {
-        return Document.fromJson(response.data);
+        return response.data as Map<String, dynamic>;  // {'token': newToken}
       } else {
-        throw Exception('Error ${response.statusCode}: ${response.data}');
+        throw AuthException('Refresh failed');
       }
-    } catch (e) {
-      print('Error translating document: $e');
-      rethrow;
-    }
-  }
-
-  // getImage corregido para ImageData
-  Future<ImageData> getImage(String imageId) async {
-    try {
-      final response = await _dio.get('$baseUrl/api/images/$imageId');  // Asume endpoint retorna JSON ImageData
-      return ImageData.fromJson(response.data);
     } on DioException catch (e) {
-      if (e.response != null) {
-        throw Exception('Error ${e.response!.statusCode}: ${e.response!.data}');
-      } else {
-        throw Exception('Error de conexión: ${e.message}');
+      String msg = e.message ?? 'Refresh error';
+      if (e.response?.data != null) {
+        final data = e.response!.data;
+        msg = data is Map ? (data['error'] ?? msg) : data.toString();
       }
-    }
-  }
-
-  // deleteDocument sin cambios
-
-
-  Future<Document> getDocumentTranslated(String id, String targetLang, {String sourceLang = 'auto'}) async {
-    try {
-      final response = await _dio.post(
-        '$baseUrl/api/process/$id/translate',
-        data: {'target_lang': targetLang, 'source_lang': sourceLang},
-      );
-      if (response.statusCode == 200) {
-        return Document.fromJson(response.data);  // Asume retorna Document traducido
-      } else {
-        throw Exception('Error ${response.statusCode}: ${response.data}');
-      }
+      throw AuthException(msg);
     } catch (e) {
-      print('Error translating document: $e');
       rethrow;
-    }
-  }
-
-// Opcional: Si image_ids son IDs, agrega endpoint para imágenes (ej. base64)
-  Future<String> getImageBase64(String imageId) async {
-    try {
-      final response = await _dio.get('$baseUrl/api/image/$imageId');  // Asume endpoint retorna base64
-      return response.data['base64'];
-    } catch (e) {
-      print('Error fetching image: $e');
-      rethrow;
-    }
-  }
-
-  // Eliminar documento (sin cambios)
-  Future<void> deleteDocument(String id) async {
-    try {
-      await _dio.delete('$baseUrl/api/process/$id');
-    } on DioException catch (e) {
-      if (e.response != null) {
-        throw Exception('Error ${e.response!.statusCode}: ${e.response!.data}');
-      } else {
-        throw Exception('Error de conexión: ${e.message}');
-      }
     }
   }
 }
-
-

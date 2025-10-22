@@ -1,20 +1,25 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';  // Para debugPrint
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import '../models/document.dart';
+import '../services/document_service.dart' as document_service;  // Para getImage
+import '../models/document.dart';  // ImageData
 
 class ImageGallery extends StatefulWidget {
+  final String docId;  // Nuevo: Requerido para endpoint /documents/{docId}/images/{imageId}
   final List<String> imageIds;
 
-  const ImageGallery({super.key, required this.imageIds});
+  const ImageGallery({
+    super.key,
+    required this.docId,
+    required this.imageIds,
+  });
 
   @override
   State<ImageGallery> createState() => _ImageGalleryState();
 }
 
 class _ImageGalleryState extends State<ImageGallery> {
-  final ApiService _api = ApiService();
   final Map<String, ImageData> _loadedImages = {};
   final Map<String, bool> _loading = {};
 
@@ -30,13 +35,16 @@ class _ImageGalleryState extends State<ImageGallery> {
         _loadImage(imageId);
       }
     }
+    if (mounted) setState(() {});  // Trigger rebuild post-init si needed
   }
 
   Future<void> _loadImage(String imageId) async {
+    if (_loading[imageId] == true) return;  // Avoid duplicate loads
+    if (!mounted) return;
     setState(() => _loading[imageId] = true);
 
     try {
-      final imageData = await _api.getImage(imageId);
+      final imageData = await document_service.DocumentService.getImage(widget.docId, imageId);
       if (mounted) {
         setState(() {
           _loadedImages[imageId] = imageData as ImageData;
@@ -44,10 +52,10 @@ class _ImageGalleryState extends State<ImageGallery> {
         });
       }
     } catch (e) {
+      debugPrint('Error loading image $imageId: $e');
       if (mounted) {
         setState(() => _loading[imageId] = false);
       }
-      debugPrint('Error loading image $imageId: $e');
     }
   }
 
@@ -119,8 +127,6 @@ class _ImageThumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    // Capturar imageData en una variable local no-nullable si existe
     final data = imageData;
 
     return InkWell(
@@ -131,7 +137,7 @@ class _ImageThumbnail extends StatelessWidget {
           color: theme.colorScheme.surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: theme.colorScheme.outline.withValues(alpha: 0.2),
+            color: theme.colorScheme.outline.withAlpha((0.2 * 255).round()),
           ),
         ),
         child: ClipRRect(
@@ -142,8 +148,9 @@ class _ImageThumbnail extends StatelessWidget {
               ? Stack(
             fit: StackFit.expand,
             children: [
-              Image.memory(
-                base64Decode(data.data),
+              (data.data?.isNotEmpty == true)
+                  ? Image.memory(
+                base64Decode(data.data!),
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return Center(
@@ -153,6 +160,12 @@ class _ImageThumbnail extends StatelessWidget {
                     ),
                   );
                 },
+              )
+                  : Center(
+                child: Icon(
+                  Icons.error_outline,
+                  color: theme.colorScheme.error,
+                ),
               ),
               // Overlay para indicar que es clickeable
               Positioned(
@@ -192,7 +205,14 @@ class _FullImageView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Uint8List bytes = base64Decode(imageData.data);
+    Uint8List? bytes;
+    if (imageData.data?.isNotEmpty == true) {
+      try {
+        bytes = base64Decode(imageData.data!);
+      } catch (e) {
+        debugPrint('Full view decode error: $e');
+      }
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -200,7 +220,7 @@ class _FullImageView extends StatelessWidget {
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
-          'Imagen (${imageData.extension})',
+          'Imagen (${imageData.extension ?? 'N/A'})',
           style: const TextStyle(color: Colors.white),
         ),
         actions: [
@@ -216,7 +236,8 @@ class _FullImageView extends StatelessWidget {
           ),
         ],
       ),
-      body: Center(
+      body: bytes != null && bytes.isNotEmpty
+          ? Center(
         child: InteractiveViewer(
           minScale: 0.5,
           maxScale: 4.0,
@@ -237,7 +258,7 @@ class _FullImageView extends StatelessWidget {
                     Text(
                       'Error al cargar la imagen',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: Colors.white.withAlpha((0.7 * 255).round()),
                       ),
                     ),
                   ],
@@ -245,6 +266,25 @@ class _FullImageView extends StatelessWidget {
               );
             },
           ),
+        ),
+      )
+          : Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.broken_image,
+              color: Colors.white,
+              size: 64,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Error al cargar la imagen',
+              style: TextStyle(
+                color: Colors.white.withAlpha((0.7 * 255).round()),
+              ),
+            ),
+          ],
         ),
       ),
     );
